@@ -1,0 +1,77 @@
+type key.
+type pkey.
+type skey.
+type spkey.
+type sskey.
+
+fun h(bitstring): bitstring.
+fun pk(skey): pkey.
+fun aenc(bitstring, pkey): bitstring.
+fun eReport(bitstring, pkey, bitstring): bitstring.
+fun mac(bitstring, key): bitstring.
+fun eGetKey(bitstring): key [private].
+fun challenge(bitstring, bitstring, bitstring): bitstring. 
+fun spk (sskey): spkey.
+fun sign(bitstring, sskey): bitstring.
+fun quote(bitstring,bitstring,bitstring,bitstring): bitstring.
+
+reduc forall x: bitstring, y: skey; adec(aenc(x, pk(y)), y) = x.
+reduc forall mrenclave:bitstring, ecdhKey: pkey, clg: bitstring; getMrenclave(eReport(mrenclave, ecdhKey, clg)) = mrenclave.
+reduc forall mrenclave:bitstring, ecdhKey: pkey, clg: bitstring; getPKey(eReport(mrenclave, ecdhKey, clg)) = ecdhKey.
+reduc forall mrenclave:bitstring, ecdhKey: pkey, clg: bitstring; getChallenge(eReport(mrenclave, ecdhKey, clg)) = clg.
+reduc forall n:bitstring, ID:bitstring, Sig: bitstring; getNonce(challenge(n, ID, Sig)) = n.
+reduc forall n:bitstring, ID:bitstring, Sig: bitstring; getSPID(challenge(n, ID, Sig)) = ID.
+reduc forall n:bitstring, ID:bitstring, Sig: bitstring; getSigRL(challenge(n, ID, Sig)) = Sig.
+reduc forall x:bitstring, y: sskey; getmess(sign(x,y)) = x.
+reduc forall x:bitstring, y: sskey; checksign(sign(x,y),spk(y)) = x.
+
+free c : channel.
+free cSPAE : channel.
+free cAEQE : channel.
+free cSPIAS : channel.
+free ecdhpk : pkey [private].
+
+event IASattest.
+
+query attacker(ecdhpk).
+
+let AE(MRENCLAVE_QE: bitstring) = 
+       in(cSPAE, clg: bitstring);
+       new ecdhsk : skey;
+       let ecdhpk = pk(ecdhsk) in 
+       let report: bitstring = eReport(MRENCLAVE_QE, ecdhpk, clg) in
+       out(cAEQE, (report, mac(report, eGetKey(MRENCLAVE_QE))));
+       in(cAEQE,(encryptedQuote:bitstring, encryptedQuoteMac:bitstring));
+       out(cSPAE,(encryptedQuote, encryptedQuoteMac)).
+              
+let QE(MRENCLAVE_QE: bitstring,attestationPrivatekey:sskey,IASPublickey:pkey) = 
+       in(cAEQE, (report:bitstring, macBody:bitstring));
+       if macBody = mac(report,eGetKey(MRENCLAVE_QE)) then
+       let signatureNonce:bitstring = sign(getNonce(getChallenge(report)),attestationPrivatekey) in
+       let signatureMRENCLAVE:bitstring = sign(MRENCLAVE_QE,attestationPrivatekey) in
+       let signatureSigRL:bitstring = sign(getSigRL(getChallenge(report)),attestationPrivatekey) in
+       let quoteBody:bitstring = quote(report,signatureNonce,signatureMRENCLAVE,signatureSigRL) in
+       let encryptedQuote:bitstring = aenc(quoteBody, IASPublickey) in
+       out (cAEQE,(encryptedQuote, mac(encryptedQuote,eGetKey(getSPID(getChallenge(report)))))).
+
+let SP(nonce:bitstring,SPID:bitstring,SigRL:bitstring) =
+       out(cSPAE,challenge(nonce,SPID,SigRL));
+       in(cSPAE,(encryptedQuote:bitstring, encryptedQuoteMac:bitstring));
+       if encryptedQuoteMac = mac(encryptedQuote, eGetKey(SPID)) then
+       out(cSPIAS,encryptedQuote).
+       
+let IAS(IASPrivatekey:skey) =  
+       in(cSPIAS, encryptedQuote:bitstring);
+       let qt:bitstring = adec(encryptedQuote, IASPrivatekey) in
+       event IASattest.
+
+process
+       new  MRENCLAVE_QE : bitstring; out (cSPAE,MRENCLAVE_QE);
+       new 	attestationPrivatekey: sskey;
+       new 	IASPrivatekey: skey;
+       new nonce: bitstring;
+       new SPID: bitstring;
+       new SigRL: bitstring;
+       let attestationPublickey: spkey =spk(attestationPrivatekey) in out(c, attestationPublickey);
+       let IASPublickey: pkey = pk(IASPrivatekey) in out(c, IASPublickey);
+       (AE(MRENCLAVE_QE) | QE(MRENCLAVE_QE,attestationPrivatekey,IASPublickey) | SP(nonce,SPID,SigRL) | IAS(IASPrivatekey))

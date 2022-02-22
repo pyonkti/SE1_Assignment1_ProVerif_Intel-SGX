@@ -1,0 +1,54 @@
+type G.
+type exponent.
+
+const g: G [private].
+
+fun h(bitstring): bitstring.
+fun expToString(exponent): bitstring.
+fun senc(bitstring, G): bitstring.
+fun sdec(bitstring, G): bitstring.
+fun exp(G, exponent): G.
+fun eReport(bitstring, bitstring): bitstring.
+fun mac(bitstring, G): bitstring.
+fun eGetKey(bitstring): G [private]. 
+
+equation forall m: bitstring, k: G; sdec(senc(m, k), k) = m.
+equation forall m: bitstring, k: G; senc(sdec(m, k), k) = m.
+equation forall x: exponent, y: exponent; exp(exp(g, x), y) = exp(exp(g, y), x).
+reduc forall m:exponent; toExponent(expToString(m)) = m.
+reduc forall mrenclave:bitstring, ecdhKey: bitstring, hEcdhKey: bitstring; getMrenclave(eReport(mrenclave, ecdhKey)) = mrenclave.
+reduc forall mrenclave:bitstring, ecdhKey: bitstring, hEcdhKey: bitstring; getEcdhKey(eReport(mrenclave, ecdhKey)) = ecdhKey.
+
+free c : channel.
+free m : bitstring [private].
+free logA : bitstring [private].
+free logB : bitstring [private].
+
+query attacker(m).
+query attacker(eGetKey(h(logA))).
+
+let enclaveA(ecdhKeyA: exponent) = 
+                 out(c, h(logA));
+                 in(c, (body:bitstring, macBody:bitstring));
+                 let ecdhKeyBString:bitstring = getEcdhKey(body) in
+                 let ecdhKeyB:exponent = toExponent(ecdhKeyBString) in
+                 if macBody = mac(body,eGetKey(h(logA))) then
+                 let dh_smk:G = exp(exp(g, ecdhKeyA), ecdhKeyB) in
+                 let replyBody: bitstring = eReport(h(logA), expToString(ecdhKeyA)) in
+                 out(c,(replyBody,mac(replyBody, eGetKey(getMrenclave(replyBody)))));
+                 out(c, senc(m,dh_smk)).
+
+let enclaveB(ecdhKeyB: exponent) = 
+                 in(c,mrenclave: bitstring);
+                 let body: bitstring = eReport(h(logB), expToString(ecdhKeyB)) in
+                 out(c,(body,mac(body, eGetKey(mrenclave))));
+                 in(c, (replyBody:bitstring, macReplyBody:bitstring));
+                 let ecdhKeyAString:bitstring = getEcdhKey(replyBody) in
+                 let ecdhKeyA:exponent = toExponent(ecdhKeyAString) in
+                 if macReplyBody = mac(replyBody,eGetKey(getMrenclave(replyBody))) then
+                 let dh_smk:G = exp(exp(g, ecdhKeyA), ecdhKeyB) in
+                 in(c,encText:bitstring).
+process	
+                 new ecdhKeyA: exponent;
+                 new ecdhKeyB: exponent;
+                 enclaveA(ecdhKeyA) | enclaveB(ecdhKeyB)
